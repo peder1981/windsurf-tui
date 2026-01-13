@@ -14,6 +14,8 @@ type AddConnectionForm struct {
 	field           int
 	isConfirmed     bool
 	validationError string
+	mode            string
+	fieldLabelWidth int
 }
 
 func NewAddConnectionForm() *AddConnectionForm {
@@ -27,9 +29,11 @@ func NewAddConnectionForm() *AddConnectionForm {
 			Database: "",
 			SSLMode:  "disable",
 		},
-		cursor:      0,
-		field:       0,
-		isConfirmed: false,
+		cursor:          0,
+		field:           0,
+		isConfirmed:     false,
+		mode:            "add",
+		fieldLabelWidth: 18,
 	}
 }
 
@@ -44,10 +48,12 @@ func (acf *AddConnectionForm) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyUp:
 			if acf.field > 0 {
 				acf.field--
+				acf.syncCursorToField()
 			}
 		case tea.KeyDown:
 			if acf.field < 6 {
 				acf.field++
+				acf.syncCursorToField()
 			}
 		case tea.KeyEnter:
 			if acf.validate() {
@@ -73,6 +79,40 @@ func (acf *AddConnectionForm) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return acf, nil
+}
+
+func (acf *AddConnectionForm) syncCursorToField() {
+	switch acf.field {
+	case 0:
+		if acf.cursor > len(acf.connectionInfo.Name) {
+			acf.cursor = len(acf.connectionInfo.Name)
+		}
+	case 1:
+		if acf.cursor > len(acf.connectionInfo.Host) {
+			acf.cursor = len(acf.connectionInfo.Host)
+		}
+	case 2:
+		if acf.cursor > len(acf.connectionInfo.User) {
+			acf.cursor = len(acf.connectionInfo.User)
+		}
+	case 3:
+		if acf.cursor > len(acf.connectionInfo.Password) {
+			acf.cursor = len(acf.connectionInfo.Password)
+		}
+	case 4:
+		if acf.cursor > len(acf.connectionInfo.Database) {
+			acf.cursor = len(acf.connectionInfo.Database)
+		}
+	case 5:
+		if acf.cursor > len(acf.connectionInfo.SSLMode) {
+			acf.cursor = len(acf.connectionInfo.SSLMode)
+		}
+	case 6:
+		portStr := fmt.Sprintf("%d", acf.connectionInfo.Port)
+		if acf.cursor > len(portStr) {
+			acf.cursor = len(portStr)
+		}
+	}
 }
 
 func (acf *AddConnectionForm) moveCursorRight() {
@@ -192,7 +232,13 @@ func (acf *AddConnectionForm) insertAtCursor(current, char string) string {
 
 func (acf *AddConnectionForm) deleteFromCursor(current string) string {
 	if acf.cursor <= 1 {
+		if len(current) <= 1 {
+			return ""
+		}
 		return current[1:]
+	}
+	if acf.cursor > len(current) {
+		return current[:len(current)-1]
 	}
 	return current[:acf.cursor-1] + current[acf.cursor:]
 }
@@ -205,12 +251,16 @@ func (acf *AddConnectionForm) validate() bool {
 }
 
 func (acf *AddConnectionForm) View() string {
-	title := "🔧 Add PostgreSQL Connection"
+	title := "🔧 Configure Connection"
+	if acf.mode == "edit" {
+		title = "✏️ Edit Connection"
+	}
+
 	titleStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#FFD700")).
 		Bold(true).
 		Align(lipgloss.Center).
-		Width(60)
+		Width(70)
 
 	content := titleStyle.Render(title) + "\n\n"
 
@@ -228,10 +278,13 @@ func (acf *AddConnectionForm) View() string {
 		{"SSL Mode:", acf.connectionInfo.SSLMode, 5},
 	}
 
+	labelWidth := acf.fieldLabelWidth
+	valueWidth := 35
+
 	for i, field := range fields {
-		cursor := " "
+		lineStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF"))
 		if acf.field == i {
-			cursor = ">"
+			lineStyle = lineStyle.Background(lipgloss.Color("#2B6CB0"))
 		}
 
 		value := field.value
@@ -239,15 +292,22 @@ func (acf *AddConnectionForm) View() string {
 			value = strings.Repeat("*", len(value))
 		}
 
-		fieldStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FFFFFF"))
+		labelStyled := lipgloss.NewStyle().
+			Width(labelWidth).
+			Align(lipgloss.Right).
+			Bold(true).
+			Render(field.label)
 
+		valueStyled := lipgloss.NewStyle().
+			Width(valueWidth).
+			Render(value)
+
+		cursorMarker := " "
 		if acf.field == i {
-			fieldStyle = fieldStyle.Background(lipgloss.Color("#4169E1"))
+			cursorMarker = ">"
 		}
 
-		line := fmt.Sprintf("%s %s %s", cursor, fieldStyle.Render(field.label), fieldStyle.Render(value))
-		content += line + "\n"
+		content += lineStyle.Render(fmt.Sprintf("%s %s %s", cursorMarker, labelStyled, valueStyled)) + "\n"
 	}
 
 	if acf.validationError != "" {
@@ -257,11 +317,16 @@ func (acf *AddConnectionForm) View() string {
 		content += "\n" + errorStyle.Render(acf.validationError) + "\n"
 	}
 
+	helpText := "↑/↓ Navega | ←/→ Move Cursor | Enter Salva | Esc Cancela | Tab Alterna Campo"
+	if acf.mode == "edit" {
+		helpText = "↑/↓ Navega | ←/→ Move Cursor | Enter Atualiza | Esc Cancela Edição"
+	}
+
 	helpStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#808080")).
 		Italic(true)
 
-	content += "\n" + helpStyle.Render("↑/↓ Navigate | Enter Save | Escape Cancel")
+	content += "\n" + helpStyle.Render(helpText)
 
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -273,6 +338,16 @@ func (acf *AddConnectionForm) View() string {
 
 func (acf *AddConnectionForm) GetConnectionInfo() *ConnectionInfo {
 	return acf.connectionInfo
+}
+
+func (acf *AddConnectionForm) SetConnectionInfo(info *ConnectionInfo) {
+	if info == nil {
+		return
+	}
+	acf.connectionInfo = info
+	acf.mode = "edit"
+	acf.field = 0
+	acf.cursor = len(info.Name)
 }
 
 func (acf *AddConnectionForm) IsConfirmed() bool {

@@ -35,6 +35,8 @@ type XTreeGoldApp struct {
 	connectionDialog  *ConnectionDialog
 	addConnectionForm *AddConnectionForm
 	connectionStep    ConnectionStep
+	statusMessage     string
+	statusTimestamp   time.Time
 }
 
 type AppStyles struct {
@@ -122,6 +124,10 @@ type DeleteRowMsg struct {
 	ctid     string
 	rowIndex int
 	colIndex int
+}
+
+type ConnectionSavedMsg struct {
+	message string
 }
 
 type SearchResultMsg struct {
@@ -598,6 +604,14 @@ func (app *XTreeGoldApp) handleConnectionDialog(msg tea.KeyMsg) (tea.Model, tea.
 }
 
 func (app *XTreeGoldApp) handleAddConnectionForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyTab {
+		app.addConnectionForm.field++
+		if app.addConnectionForm.field > 6 {
+			app.addConnectionForm.field = 0
+		}
+		app.addConnectionForm.syncCursorToField()
+		return app, nil
+	}
 	form := app.addConnectionForm
 	model, cmd := form.Update(msg)
 	app.addConnectionForm = model.(*AddConnectionForm)
@@ -607,6 +621,8 @@ func (app *XTreeGoldApp) handleAddConnectionForm(msg tea.KeyMsg) (tea.Model, tea
 			app.focusMode = FocusConnectionDialog
 			app.connectionStep = StepSelectConnection
 		} else if conn := form.GetConnectionInfo(); conn != nil {
+			app.connectionMgr.savedConnections[conn.Name] = conn
+			app.connectionMgr.SaveConnections()
 			if err := app.connectionMgr.SaveConnection(conn); err != nil {
 				return app, func() tea.Msg {
 					return ErrMsg{fmt.Errorf("failed to save connection: %w", err)}

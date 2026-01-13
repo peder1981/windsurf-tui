@@ -9,6 +9,7 @@ import (
 
 type ConnectionDialog struct {
 	choices       []string
+	connections   []*ConnectionInfo
 	cursor        int
 	selectedIndex int
 	isConfirmed   bool
@@ -16,22 +17,43 @@ type ConnectionDialog struct {
 }
 
 func NewConnectionDialog(connectionMgr *ConnectionManager) *ConnectionDialog {
-	savedConns := connectionMgr.GetSavedConnections()
-
-	choices := make([]string, 0, len(savedConns)+1)
-	choices = append(choices, "🔧 Add New Connection...")
-
-	for _, conn := range savedConns {
-		choices = append(choices, fmt.Sprintf("📁 %s (%s:%d)", conn.Name, conn.Host, conn.Port))
-	}
-
-	return &ConnectionDialog{
-		choices:       choices,
+	cd := &ConnectionDialog{
 		cursor:        0,
 		selectedIndex: -1,
 		isConfirmed:   false,
 		connectionMgr: connectionMgr,
 	}
+	cd.refreshChoices()
+	return cd
+}
+
+func (cd *ConnectionDialog) refreshChoices() {
+	cd.connections = cd.connectionMgr.GetSavedConnections()
+
+	cd.choices = make([]string, 0, len(cd.connections)+1)
+	cd.choices = append(cd.choices, "🔧 Nova conexão (Ctrl+N)")
+
+	for _, conn := range cd.connections {
+		cd.choices = append(cd.choices, fmt.Sprintf("📁 %s (%s:%d)", conn.Name, conn.Host, conn.Port))
+	}
+
+	if len(cd.choices) == 0 {
+		cd.cursor = 0
+		return
+	}
+
+	if cd.cursor >= len(cd.choices) {
+		cd.cursor = len(cd.choices) - 1
+	}
+	if cd.cursor < 0 {
+		cd.cursor = 0
+	}
+}
+
+func (cd *ConnectionDialog) ReloadChoices() {
+	cd.refreshChoices()
+	cd.selectedIndex = -1
+	cd.isConfirmed = false
 }
 
 func (cd *ConnectionDialog) Init() tea.Cmd {

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	_ "github.com/lib/pq"
 )
@@ -27,10 +29,25 @@ type ConnectionManager struct {
 }
 
 func NewConnectionManager() (*ConnectionManager, error) {
+	homeConfig := filepath.Join(os.Getenv("HOME"), ".windsurf-tui", "connections.json")
+
+	var configPath string
+	cwd, err := os.Getwd()
+	if err == nil {
+		localConfig := filepath.Join(cwd, "connections.json")
+		if _, err := os.Stat(localConfig); err == nil {
+			configPath = localConfig
+		}
+	}
+
+	if configPath == "" {
+		configPath = homeConfig
+	}
+
 	cm := &ConnectionManager{
 		connections:      make(map[string]*sql.DB),
 		savedConnections: make(map[string]*ConnectionInfo),
-		configPath:       filepath.Join(os.Getenv("HOME"), ".windsurf-tui", "connections.json"),
+		configPath:       configPath,
 	}
 
 	if err := os.MkdirAll(filepath.Dir(cm.configPath), 0755); err != nil {
@@ -141,8 +158,12 @@ func (cm *ConnectionManager) LoadSavedConnections() error {
 func (cm *ConnectionManager) GetSavedConnections() []*ConnectionInfo {
 	connections := make([]*ConnectionInfo, 0, len(cm.savedConnections))
 	for _, conn := range cm.savedConnections {
-		connections = append(connections, conn)
+		copyConn := *conn
+		connections = append(connections, &copyConn)
 	}
+	sort.Slice(connections, func(i, j int) bool {
+		return strings.ToLower(connections[i].Name) < strings.ToLower(connections[j].Name)
+	})
 	return connections
 }
 
