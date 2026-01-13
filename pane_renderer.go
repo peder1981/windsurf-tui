@@ -220,6 +220,12 @@ func (pr *PaneRenderer) renderDataBody(paneModel *PaneModel, width, height int, 
 	visibleColumns := pr.visibleColumns(columns[colOffset:], data, width-4)
 
 	columnWidths := pr.calculateColumnWidths(visibleColumns, data[rowOffset:endRow])
+	selectedRow := paneModel.GetSelectedDataRowIndex()
+	selectedCol := paneModel.GetSelectedDataColIndex()
+	colIndexLookup := make(map[string]int, len(columns))
+	for idx, col := range columns {
+		colIndexLookup[col] = idx
+	}
 
 	var lines []string
 	var headerParts []string
@@ -237,6 +243,15 @@ func (pr *PaneRenderer) renderDataBody(paneModel *PaneModel, width, height int, 
 	for rowIdx := rowOffset; rowIdx < len(data) && rowIdx < rowOffset+maxRows; rowIdx++ {
 		row := data[rowIdx]
 		var rowParts []string
+		rowSelected := rowIdx == selectedRow
+		rowStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF"))
+		if rowSelected {
+			if isFocused {
+				rowStyle = rowStyle.Background(lipgloss.Color("#083863"))
+			} else {
+				rowStyle = rowStyle.Background(lipgloss.Color("#2b2b2b"))
+			}
+		}
 		for _, col := range visibleColumns {
 			val := row[col]
 			valStr := fmt.Sprintf("%v", val)
@@ -248,8 +263,15 @@ func (pr *PaneRenderer) renderDataBody(paneModel *PaneModel, width, height int, 
 					valStr = valStr[:truncateWidth]
 				}
 			}
-			style := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Width(columnWidths[col])
-			rowParts = append(rowParts, style.Render(valStr))
+			cellStyle := rowStyle.Copy().Width(columnWidths[col])
+			if rowSelected && colIndexLookup[col] == selectedCol {
+				if isFocused {
+					cellStyle = cellStyle.Foreground(lipgloss.Color("#000000")).Background(lipgloss.Color("#FFD700")).Bold(true)
+				} else {
+					cellStyle = cellStyle.Background(lipgloss.Color("#555555")).Bold(true)
+				}
+			}
+			rowParts = append(rowParts, cellStyle.Render(valStr))
 		}
 		lines = append(lines, strings.Join(rowParts, " "))
 	}

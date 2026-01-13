@@ -400,12 +400,24 @@ func (pm *PaneModel) GetDataColCount() int {
 	return len(pm.dataColumns)
 }
 
+func (pm *PaneModel) GetColumnIndexByName(name string) int {
+	for idx, col := range pm.dataColumns {
+		if col == name {
+			return idx
+		}
+	}
+	return -1
+}
+
 func (pm *PaneModel) GetRowCTID(rowIdx int) string {
 	if rowIdx < 0 || rowIdx >= len(pm.data) {
 		return ""
 	}
 	row := pm.data[rowIdx]
 	if val, ok := row["__ctid"]; ok {
+		if b, ok := val.([]byte); ok {
+			return string(b)
+		}
 		if s, ok := val.(string); ok {
 			return s
 		}

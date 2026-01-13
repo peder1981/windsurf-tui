@@ -117,6 +117,8 @@ func (pn *PaneNavigator) loadTableData(tableNode *TreeNode) (tea.Model, tea.Cmd)
 			database: database,
 			schema:   schema,
 			table:    table,
+			rowIndex: 0,
+			colIndex: 0,
 		}
 	}
 }

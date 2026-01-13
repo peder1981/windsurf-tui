@@ -113,7 +113,7 @@ func (ti *TextInput) View(prompt string) string {
 		style.Render(display))
 }
 
-func parseKeyValueInput(input string) map[string]string {
+func ParseKeyValueInput(input string) map[string]string {
 	values := make(map[string]string)
 	pairs := strings.Split(input, ",")
 	for _, pair := range pairs {

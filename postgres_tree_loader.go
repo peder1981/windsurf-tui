@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -12,6 +13,81 @@ type PostgresTreeLoader struct {
 	db          *sql.DB
 	connInfo    *ConnectionInfo
 	connections map[string]*sql.DB
+}
+
+func (ptl *PostgresTreeLoader) UpdateCell(databaseName, schemaName, tableName, column, ctid string, value interface{}) error {
+	dbConn, err := ptl.getDatabaseConnection(databaseName)
+	if err != nil {
+		return err
+	}
+
+	query := fmt.Sprintf(`
+		UPDATE %s.%s
+		SET %s = $1
+		WHERE ctid = $2
+	`, quoteIdentifier(schemaName), quoteIdentifier(tableName), quoteIdentifier(column))
+
+	_, err = dbConn.Exec(query, value, ctid)
+	if err != nil {
+		return fmt.Errorf("failed to update %s.%s.%s: %w", schemaName, tableName, column, err)
+	}
+	return nil
+}
+
+func (ptl *PostgresTreeLoader) InsertRow(databaseName, schemaName, tableName string, values map[string]interface{}) error {
+	if len(values) == 0 {
+		return fmt.Errorf("no values provided for insert")
+	}
+
+	dbConn, err := ptl.getDatabaseConnection(databaseName)
+	if err != nil {
+		return err
+	}
+
+	columns := make([]string, 0, len(values))
+	for col := range values {
+		columns = append(columns, col)
+	}
+	sort.Strings(columns)
+
+	var placeholders []string
+	var args []interface{}
+	for idx, col := range columns {
+		placeholders = append(placeholders, fmt.Sprintf("$%d", idx+1))
+		args = append(args, values[col])
+	}
+
+	var quotedCols []string
+	for _, col := range columns {
+		quotedCols = append(quotedCols, quoteIdentifier(col))
+	}
+
+	query := fmt.Sprintf(`
+		INSERT INTO %s.%s (%s)
+		VALUES (%s)
+	`, quoteIdentifier(schemaName), quoteIdentifier(tableName), strings.Join(quotedCols, ", "), strings.Join(placeholders, ", "))
+
+	if _, err := dbConn.Exec(query, args...); err != nil {
+		return fmt.Errorf("failed to insert row: %w", err)
+	}
+	return nil
+}
+
+func (ptl *PostgresTreeLoader) DeleteRow(databaseName, schemaName, tableName, ctid string) error {
+	dbConn, err := ptl.getDatabaseConnection(databaseName)
+	if err != nil {
+		return err
+	}
+
+	query := fmt.Sprintf(`
+		DELETE FROM %s.%s
+		WHERE ctid = $1
+	`, quoteIdentifier(schemaName), quoteIdentifier(tableName))
+
+	if _, err := dbConn.Exec(query, ctid); err != nil {
+		return fmt.Errorf("failed to delete row: %w", err)
+	}
+	return nil
 }
 
 func (ptl *PostgresTreeLoader) getDatabaseConnection(databaseName string) (*sql.DB, error) {
@@ -360,7 +436,8 @@ func (ptl *PostgresTreeLoader) GetTableData(databaseName, schemaName, tableName 
 	}
 
 	query := fmt.Sprintf(`
-		SELECT * FROM %s.%s
+		SELECT ctid AS "__ctid", *
+		FROM %s.%s
 		ORDER BY ctid
 		LIMIT %d OFFSET %d
 	`, quoteIdentifier(schemaName), quoteIdentifier(tableName), limit, offset)
