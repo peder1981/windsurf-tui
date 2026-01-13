@@ -18,7 +18,7 @@ type XTreeGoldApp struct {
 	paneNavigator     *PaneNavigator
 	paneRenderer      *PaneRenderer
 	connectionMgr     *ConnectionManager
-	postgresLoader    *PostgresTreeLoader
+	dbLoader          DatabaseLoader
 	styles            AppStyles
 	initialized       bool
 	currentServer     string
@@ -101,7 +101,7 @@ type UpdateCellMsg struct {
 	database string
 	schema   string
 	table    string
-	ctid     string
+	rowID    string
 	column   string
 	value    interface{}
 	rowIndex int
@@ -121,7 +121,7 @@ type DeleteRowMsg struct {
 	database string
 	schema   string
 	table    string
-	ctid     string
+	rowID    string
 	rowIndex int
 	colIndex int
 }
@@ -236,8 +236,8 @@ func (app *XTreeGoldApp) requestDeleteRow() tea.Cmd {
 		return nil
 	}
 	rowIdx := app.paneModel.GetSelectedDataRowIndex()
-	ctid := app.paneModel.GetSelectedRowCTID()
-	if ctid == "" {
+	rowID := app.paneModel.GetSelectedRowID()
+	if rowID == "" {
 		return nil
 	}
 	db, schema, table := app.paneModel.GetDataContext()
@@ -248,7 +248,7 @@ func (app *XTreeGoldApp) requestDeleteRow() tea.Cmd {
 			database: db,
 			schema:   schema,
 			table:    table,
-			ctid:     ctid,
+			rowID:    rowID,
 			rowIndex: targetRow,
 			colIndex: colIdx,
 		}
@@ -286,8 +286,8 @@ func (app *XTreeGoldApp) commitUpdateCell() (tea.Model, tea.Cmd) {
 		return app, nil
 	}
 
-	ctid := app.paneModel.GetRowCTID(rowIdx)
-	if ctid == "" {
+	rowID := app.paneModel.GetRowID(rowIdx)
+	if rowID == "" {
 		app.cancelDataEdit()
 		return app, nil
 	}
@@ -303,7 +303,7 @@ func (app *XTreeGoldApp) commitUpdateCell() (tea.Model, tea.Cmd) {
 			database: db,
 			schema:   schema,
 			table:    table,
-			ctid:     ctid,
+			rowID:    rowID,
 			column:   colName,
 			value:    converted,
 			rowIndex: rowIdx,
@@ -480,8 +480,8 @@ func (app *XTreeGoldApp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return app, nil
 	case ExecuteQueryMsg:
-		if app.postgresLoader != nil {
-			results, err := app.postgresLoader.ExecuteQuery(msg.query)
+		if app.dbLoader != nil {
+			results, err := app.dbLoader.ExecuteQuery(msg.query)
 			if err != nil {
 				app.tree.error = err
 				return app, nil
@@ -491,8 +491,8 @@ func (app *XTreeGoldApp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return app, nil
 	case LoadTableDataMsg:
-		if app.postgresLoader != nil {
-			results, err := app.postgresLoader.GetTableData(msg.database, msg.schema, msg.table, 100, 0)
+		if app.dbLoader != nil {
+			results, err := app.dbLoader.GetTableData(msg.database, msg.schema, msg.table, 100, 0)
 			if err != nil {
 				app.tree.error = err
 				return app, nil
@@ -505,8 +505,8 @@ func (app *XTreeGoldApp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return app, nil
 	case UpdateCellMsg:
-		if app.postgresLoader != nil {
-			if err := app.postgresLoader.UpdateCell(msg.database, msg.schema, msg.table, msg.column, msg.ctid, msg.value); err != nil {
+		if app.dbLoader != nil {
+			if err := app.dbLoader.UpdateCell(msg.database, msg.schema, msg.table, msg.column, msg.rowID, msg.value); err != nil {
 				app.tree.error = err
 				return app, nil
 			}
@@ -522,8 +522,8 @@ func (app *XTreeGoldApp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return app, nil
 	case InsertRowMsg:
-		if app.postgresLoader != nil {
-			if err := app.postgresLoader.InsertRow(msg.database, msg.schema, msg.table, msg.values); err != nil {
+		if app.dbLoader != nil {
+			if err := app.dbLoader.InsertRow(msg.database, msg.schema, msg.table, msg.values); err != nil {
 				app.tree.error = err
 				return app, nil
 			}
@@ -539,8 +539,8 @@ func (app *XTreeGoldApp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return app, nil
 	case DeleteRowMsg:
-		if app.postgresLoader != nil {
-			if err := app.postgresLoader.DeleteRow(msg.database, msg.schema, msg.table, msg.ctid); err != nil {
+		if app.dbLoader != nil {
+			if err := app.dbLoader.DeleteRow(msg.database, msg.schema, msg.table, msg.rowID); err != nil {
 				app.tree.error = err
 				return app, nil
 			}
@@ -574,6 +574,7 @@ func (app *XTreeGoldApp) handleConnectionDialog(msg tea.KeyMsg) (tea.Model, tea.
 
 	if dialog.IsConfirmed() {
 		if dialog.ShouldAddNewConnection() {
+			app.addConnectionForm = NewAddConnectionForm()
 			app.focusMode = FocusAddConnectionForm
 			app.connectionStep = StepAddConnection
 		} else if conn := dialog.GetSelectedConnection(); conn != nil {
@@ -583,18 +584,26 @@ func (app *XTreeGoldApp) handleConnectionDialog(msg tea.KeyMsg) (tea.Model, tea.
 					return ErrMsg{fmt.Errorf("connection failed: %w", err)}
 				}
 			}
+
+			loader, err := NewDatabaseLoader(db, conn)
+			if err != nil {
+				return app, func() tea.Msg {
+					return ErrMsg{fmt.Errorf("failed to initialize loader: %w", err)}
+				}
+			}
+
 			app.currentServer = conn.Name
 			app.currentConnection = conn
 			tree := NewTreeModel(db)
 			app.tree = &tree
 			app.navigator = NewTreeNavigator(app.tree)
-			app.postgresLoader = NewPostgresTreeLoader(db, conn)
-			app.navigator.SetPostgresLoader(app.postgresLoader)
-			app.paneNavigator.SetPostgresLoader(app.postgresLoader)
+			app.navigator.SetDatabaseLoader(loader)
+			app.paneNavigator.SetDatabaseLoader(loader)
+			app.dbLoader = loader
 			app.focusMode = FocusTree
 			app.connectionStep = StepConnected
 			app.initialized = false
-			return app, app.postgresLoader.LoadTreeAsync(app.currentServer)
+			return app, loader.LoadTreeAsync(app.currentServer)
 		} else {
 			return app, tea.Quit
 		}
@@ -604,14 +613,6 @@ func (app *XTreeGoldApp) handleConnectionDialog(msg tea.KeyMsg) (tea.Model, tea.
 }
 
 func (app *XTreeGoldApp) handleAddConnectionForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.Type == tea.KeyTab {
-		app.addConnectionForm.field++
-		if app.addConnectionForm.field > 6 {
-			app.addConnectionForm.field = 0
-		}
-		app.addConnectionForm.syncCursorToField()
-		return app, nil
-	}
 	form := app.addConnectionForm
 	model, cmd := form.Update(msg)
 	app.addConnectionForm = model.(*AddConnectionForm)
@@ -620,6 +621,7 @@ func (app *XTreeGoldApp) handleAddConnectionForm(msg tea.KeyMsg) (tea.Model, tea
 		if form.IsCancelled() {
 			app.focusMode = FocusConnectionDialog
 			app.connectionStep = StepSelectConnection
+			app.addConnectionForm = NewAddConnectionForm()
 		} else if conn := form.GetConnectionInfo(); conn != nil {
 			app.connectionMgr.savedConnections[conn.Name] = conn
 			app.connectionMgr.SaveConnections()
@@ -634,18 +636,27 @@ func (app *XTreeGoldApp) handleAddConnectionForm(msg tea.KeyMsg) (tea.Model, tea
 					return ErrMsg{fmt.Errorf("connection failed: %w", err)}
 				}
 			}
+
+			loader, err := NewDatabaseLoader(db, conn)
+			if err != nil {
+				return app, func() tea.Msg {
+					return ErrMsg{fmt.Errorf("failed to initialize loader: %w", err)}
+				}
+			}
+
 			app.currentServer = conn.Name
 			app.currentConnection = conn
 			tree := NewTreeModel(db)
 			app.tree = &tree
 			app.navigator = NewTreeNavigator(app.tree)
-			app.postgresLoader = NewPostgresTreeLoader(db, conn)
-			app.navigator.SetPostgresLoader(app.postgresLoader)
-			app.paneNavigator.SetPostgresLoader(app.postgresLoader)
+			app.navigator.SetDatabaseLoader(loader)
+			app.paneNavigator.SetDatabaseLoader(loader)
+			app.dbLoader = loader
 			app.focusMode = FocusTree
 			app.connectionStep = StepConnected
+			app.addConnectionForm = NewAddConnectionForm()
 			app.initialized = false
-			return app, app.postgresLoader.LoadTreeAsync(app.currentServer)
+			return app, loader.LoadTreeAsync(app.currentServer)
 		}
 	}
 

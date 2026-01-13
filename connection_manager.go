@@ -10,16 +10,26 @@ import (
 	"strings"
 
 	_ "github.com/lib/pq"
+	_ "github.com/mattn/go-sqlite3"
+)
+
+type ConnectionType string
+
+const (
+	ConnectionPostgres ConnectionType = "postgres"
+	ConnectionSQLite   ConnectionType = "sqlite"
 )
 
 type ConnectionInfo struct {
-	Name     string `json:"name"`
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
-	User     string `json:"user"`
-	Password string `json:"password"`
-	Database string `json:"database"`
-	SSLMode  string `json:"sslmode"`
+	Name     string         `json:"name"`
+	Type     ConnectionType `json:"type"`
+	Host     string         `json:"host,omitempty"`
+	Port     int            `json:"port,omitempty"`
+	User     string         `json:"user,omitempty"`
+	Password string         `json:"password,omitempty"`
+	Database string         `json:"database"`
+	SSLMode  string         `json:"sslmode,omitempty"`
+	Path     string         `json:"path,omitempty"`
 }
 
 type ConnectionManager struct {
@@ -62,17 +72,32 @@ func NewConnectionManager() (*ConnectionManager, error) {
 }
 
 func (cm *ConnectionManager) Connect(connInfo *ConnectionInfo) (*sql.DB, error) {
-	connStr := fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		connInfo.Host,
-		connInfo.Port,
-		connInfo.User,
-		connInfo.Password,
-		connInfo.Database,
-		connInfo.SSLMode,
+	var (
+		driver  string
+		connStr string
 	)
 
-	db, err := sql.Open("postgres", connStr)
+	switch connInfo.Type {
+	case ConnectionSQLite:
+		driver = "sqlite3"
+		if strings.TrimSpace(connInfo.Path) == "" {
+			return nil, fmt.Errorf("sqlite connection requires a file path")
+		}
+		connStr = connInfo.Path
+	default:
+		driver = "postgres"
+		connStr = fmt.Sprintf(
+			"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			connInfo.Host,
+			connInfo.Port,
+			connInfo.User,
+			connInfo.Password,
+			connInfo.Database,
+			connInfo.SSLMode,
+		)
+	}
+
+	db, err := sql.Open(driver, connStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open connection: %w", err)
 	}

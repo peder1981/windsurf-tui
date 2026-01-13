@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -8,7 +9,7 @@ import (
 )
 
 var hiddenDataColumns = map[string]bool{
-	"__ctid": true,
+	"__rowid": true,
 }
 
 type PaneType int
@@ -409,22 +410,23 @@ func (pm *PaneModel) GetColumnIndexByName(name string) int {
 	return -1
 }
 
-func (pm *PaneModel) GetRowCTID(rowIdx int) string {
+func (pm *PaneModel) GetRowID(rowIdx int) string {
 	if rowIdx < 0 || rowIdx >= len(pm.data) {
 		return ""
 	}
 	row := pm.data[rowIdx]
-	if val, ok := row["__ctid"]; ok {
+	if val, ok := row["__rowid"]; ok {
 		if b, ok := val.([]byte); ok {
 			return string(b)
 		}
 		if s, ok := val.(string); ok {
 			return s
 		}
+		return fmt.Sprint(val)
 	}
 	return ""
 }
 
-func (pm *PaneModel) GetSelectedRowCTID() string {
-	return pm.GetRowCTID(pm.dataSelectedRow)
+func (pm *PaneModel) GetSelectedRowID() string {
+	return pm.GetRowID(pm.dataSelectedRow)
 }

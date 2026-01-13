@@ -7,8 +7,8 @@ import (
 )
 
 type PaneNavigator struct {
-	paneModel      *PaneModel
-	postgresLoader *PostgresTreeLoader
+	paneModel *PaneModel
+	dbLoader  DatabaseLoader
 }
 
 func NewPaneNavigator(paneModel *PaneModel) *PaneNavigator {
@@ -17,8 +17,8 @@ func NewPaneNavigator(paneModel *PaneModel) *PaneNavigator {
 	}
 }
 
-func (pn *PaneNavigator) SetPostgresLoader(loader *PostgresTreeLoader) {
-	pn.postgresLoader = loader
+func (pn *PaneNavigator) SetDatabaseLoader(loader DatabaseLoader) {
+	pn.dbLoader = loader
 }
 
 func (pn *PaneNavigator) HandleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -62,7 +62,9 @@ func (pn *PaneNavigator) navigateUp() (tea.Model, tea.Cmd) {
 
 	// If at databases pane, quit
 	if currentFocus == PaneDatabases {
-		return pn.paneModel, tea.Quit
+		return pn.paneModel, func() tea.Msg {
+			return FocusModeMsg{FocusConnectionDialog}
+		}
 	}
 
 	// Otherwise, move up to previous pane
@@ -84,8 +86,8 @@ func (pn *PaneNavigator) navigateRight() (tea.Model, tea.Cmd) {
 	}
 
 	// Try to load children if not already loaded
-	if len(selectedNode.Children) == 0 && pn.postgresLoader != nil {
-		if err := pn.postgresLoader.LoadChildren(selectedNode); err != nil {
+	if len(selectedNode.Children) == 0 && pn.dbLoader != nil {
+		if err := pn.dbLoader.LoadChildren(selectedNode); err != nil {
 			return pn.paneModel, nil
 		}
 	}

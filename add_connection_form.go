@@ -2,17 +2,39 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
+type formField int
+
+const (
+	fieldDriver formField = iota
+	fieldName
+	fieldHost
+	fieldPort
+	fieldUser
+	fieldPassword
+	fieldDatabase
+	fieldSSLMode
+	fieldPath
+)
+
+var driverLabels = map[ConnectionType]string{
+	ConnectionPostgres: "PostgreSQL",
+	ConnectionSQLite:   "SQLite",
+}
+
 type AddConnectionForm struct {
 	connectionInfo  *ConnectionInfo
 	cursor          int
 	field           int
 	isConfirmed     bool
+	cancelled       bool
 	validationError string
 	mode            string
 	fieldLabelWidth int
@@ -21,6 +43,7 @@ type AddConnectionForm struct {
 func NewAddConnectionForm() *AddConnectionForm {
 	return &AddConnectionForm{
 		connectionInfo: &ConnectionInfo{
+			Type:     ConnectionPostgres,
 			Name:     "",
 			Host:     "localhost",
 			Port:     5432,
@@ -28,199 +51,243 @@ func NewAddConnectionForm() *AddConnectionForm {
 			Password: "",
 			Database: "",
 			SSLMode:  "disable",
+			Path:     "",
 		},
 		cursor:          0,
 		field:           0,
-		isConfirmed:     false,
+		fieldLabelWidth: 22,
 		mode:            "add",
-		fieldLabelWidth: 18,
 	}
 }
 
-func (acf *AddConnectionForm) Init() tea.Cmd {
-	return nil
-}
+func (acf *AddConnectionForm) Init() tea.Cmd { return nil }
 
 func (acf *AddConnectionForm) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyUp:
-			if acf.field > 0 {
-				acf.field--
-				acf.syncCursorToField()
-			}
+			acf.moveField(-1)
 		case tea.KeyDown:
-			if acf.field < 6 {
-				acf.field++
-				acf.syncCursorToField()
-			}
+			acf.moveField(1)
+		case tea.KeyTab:
+			acf.moveField(1)
 		case tea.KeyEnter:
 			if acf.validate() {
 				acf.isConfirmed = true
-			} else {
-				acf.validationError = "Please fill in required fields"
 			}
 		case tea.KeyEscape:
 			acf.isConfirmed = true
+			acf.cancelled = true
 		case tea.KeyBackspace:
 			acf.deleteChar()
 		case tea.KeyLeft:
-			if acf.cursor > 0 {
-				acf.cursor--
+			if acf.currentField() == fieldDriver {
+				acf.toggleDriver(-1)
+			} else {
+				acf.moveCursor(-1)
 			}
 		case tea.KeyRight:
-			acf.moveCursorRight()
-		default:
-			if len(msg.Runes) > 0 {
-				acf.addChar(string(msg.Runes))
+			if acf.currentField() == fieldDriver {
+				acf.toggleDriver(1)
+			} else {
+				acf.moveCursor(1)
+			}
+		case tea.KeyCtrlT:
+			acf.toggleDriver(1)
+		case tea.KeyRunes:
+			if len(msg.Runes) > 0 && !msg.Alt {
+				acf.addRunes(msg.Runes)
+			}
+		case tea.KeySpace:
+			if !msg.Alt {
+				acf.addRunes([]rune{' '})
 			}
 		}
 	}
-
 	return acf, nil
 }
 
+func (acf *AddConnectionForm) visibleFields() []formField {
+	fields := []formField{fieldDriver, fieldName}
+	if acf.connectionInfo.Type == ConnectionSQLite {
+		fields = append(fields, fieldPath)
+	} else {
+		fields = append(fields, fieldHost, fieldPort, fieldUser, fieldPassword, fieldDatabase, fieldSSLMode)
+	}
+	return fields
+}
+
+func (acf *AddConnectionForm) currentField() formField {
+	fields := acf.visibleFields()
+	if len(fields) == 0 {
+		return fieldDriver
+	}
+	if acf.field < 0 {
+		acf.field = 0
+	}
+	if acf.field >= len(fields) {
+		acf.field = len(fields) - 1
+	}
+	return fields[acf.field]
+}
+
+func (acf *AddConnectionForm) moveField(delta int) {
+	fields := acf.visibleFields()
+	if len(fields) == 0 {
+		return
+	}
+	acf.field += delta
+	if acf.field < 0 {
+		acf.field = 0
+	} else if acf.field >= len(fields) {
+		acf.field = len(fields) - 1
+	}
+	acf.syncCursorToField()
+}
+
 func (acf *AddConnectionForm) syncCursorToField() {
-	switch acf.field {
-	case 0:
-		if acf.cursor > len(acf.connectionInfo.Name) {
-			acf.cursor = len(acf.connectionInfo.Name)
-		}
-	case 1:
-		if acf.cursor > len(acf.connectionInfo.Host) {
-			acf.cursor = len(acf.connectionInfo.Host)
-		}
-	case 2:
-		if acf.cursor > len(acf.connectionInfo.User) {
-			acf.cursor = len(acf.connectionInfo.User)
-		}
-	case 3:
-		if acf.cursor > len(acf.connectionInfo.Password) {
-			acf.cursor = len(acf.connectionInfo.Password)
-		}
-	case 4:
-		if acf.cursor > len(acf.connectionInfo.Database) {
-			acf.cursor = len(acf.connectionInfo.Database)
-		}
-	case 5:
-		if acf.cursor > len(acf.connectionInfo.SSLMode) {
-			acf.cursor = len(acf.connectionInfo.SSLMode)
-		}
-	case 6:
-		portStr := fmt.Sprintf("%d", acf.connectionInfo.Port)
-		if acf.cursor > len(portStr) {
-			acf.cursor = len(portStr)
-		}
+	if acf.currentField() == fieldDriver {
+		acf.cursor = 0
+		return
+	}
+	val := acf.currentFieldValue()
+	if acf.cursor > len(val) {
+		acf.cursor = len(val)
 	}
 }
 
-func (acf *AddConnectionForm) moveCursorRight() {
-	switch acf.field {
-	case 0:
-		if acf.cursor < len(acf.connectionInfo.Name) {
-			acf.cursor++
+func (acf *AddConnectionForm) currentFieldValue() string {
+	info := acf.connectionInfo
+	switch acf.currentField() {
+	case fieldName:
+		return info.Name
+	case fieldHost:
+		return info.Host
+	case fieldPort:
+		if info.Port <= 0 {
+			return ""
 		}
-	case 1:
-		if acf.cursor < len(acf.connectionInfo.Host) {
-			acf.cursor++
-		}
-	case 2:
-		if acf.cursor < len(acf.connectionInfo.User) {
-			acf.cursor++
-		}
-	case 3:
-		if acf.cursor < len(acf.connectionInfo.Password) {
-			acf.cursor++
-		}
-	case 4:
-		if acf.cursor < len(acf.connectionInfo.Database) {
-			acf.cursor++
-		}
-	case 5:
-		if acf.cursor < len(acf.connectionInfo.SSLMode) {
-			acf.cursor++
-		}
-	case 6:
-		portStr := fmt.Sprintf("%d", acf.connectionInfo.Port)
-		if acf.cursor < len(portStr) {
-			acf.cursor++
+		return fmt.Sprintf("%d", info.Port)
+	case fieldUser:
+		return info.User
+	case fieldPassword:
+		return info.Password
+	case fieldDatabase:
+		return info.Database
+	case fieldSSLMode:
+		return info.SSLMode
+	case fieldPath:
+		return info.Path
+	default:
+		return ""
+	}
+}
+
+func (acf *AddConnectionForm) moveCursor(delta int) {
+	if acf.currentField() == fieldDriver {
+		return
+	}
+	acf.cursor += delta
+	if acf.cursor < 0 {
+		acf.cursor = 0
+	}
+	val := acf.currentFieldValue()
+	if acf.cursor > len(val) {
+		acf.cursor = len(val)
+	}
+}
+
+func (acf *AddConnectionForm) toggleDriver(delta int) {
+	drivers := []ConnectionType{ConnectionPostgres, ConnectionSQLite}
+	current := acf.connectionInfo.Type
+	idx := 0
+	for i, d := range drivers {
+		if d == current {
+			idx = i
+			break
 		}
 	}
+	idx = (idx + delta + len(drivers)) % len(drivers)
+	acf.connectionInfo.Type = drivers[idx]
+	acf.field = 0 // keep cursor on driver when toggling
+	acf.cursor = 0
+	acf.validationError = ""
 }
 
 func (acf *AddConnectionForm) addChar(char string) {
-	switch acf.field {
-	case 0:
+	if acf.currentField() == fieldDriver {
+		return
+	}
+
+	switch acf.currentField() {
+	case fieldName:
 		acf.connectionInfo.Name = acf.insertAtCursor(acf.connectionInfo.Name, char)
-		acf.cursor++
-	case 1:
+	case fieldHost:
 		acf.connectionInfo.Host = acf.insertAtCursor(acf.connectionInfo.Host, char)
-		acf.cursor++
-	case 2:
+	case fieldPort:
+		portStr := acf.insertAtCursor(acf.currentFieldValue(), char)
+		acf.setPortFromString(portStr)
+	case fieldUser:
 		acf.connectionInfo.User = acf.insertAtCursor(acf.connectionInfo.User, char)
-		acf.cursor++
-	case 3:
+	case fieldPassword:
 		acf.connectionInfo.Password = acf.insertAtCursor(acf.connectionInfo.Password, char)
-		acf.cursor++
-	case 4:
+	case fieldDatabase:
 		acf.connectionInfo.Database = acf.insertAtCursor(acf.connectionInfo.Database, char)
-		acf.cursor++
-	case 5:
+	case fieldSSLMode:
 		acf.connectionInfo.SSLMode = acf.insertAtCursor(acf.connectionInfo.SSLMode, char)
-		acf.cursor++
-	case 6:
-		portStr := fmt.Sprintf("%d", acf.connectionInfo.Port)
-		portStr = acf.insertAtCursor(portStr, char)
-		acf.cursor++
-		var port int
-		fmt.Sscanf(portStr, "%d", &port)
-		acf.connectionInfo.Port = port
+	case fieldPath:
+		acf.connectionInfo.Path = acf.insertAtCursor(acf.connectionInfo.Path, char)
+	}
+	acf.cursor++
+}
+
+func (acf *AddConnectionForm) addRunes(runes []rune) {
+	for _, r := range runes {
+		acf.addChar(string(r))
 	}
 }
 
 func (acf *AddConnectionForm) deleteChar() {
-	switch acf.field {
-	case 0:
-		if acf.cursor > 0 {
-			acf.connectionInfo.Name = acf.deleteFromCursor(acf.connectionInfo.Name)
-			acf.cursor--
-		}
-	case 1:
-		if acf.cursor > 0 {
-			acf.connectionInfo.Host = acf.deleteFromCursor(acf.connectionInfo.Host)
-			acf.cursor--
-		}
-	case 2:
-		if acf.cursor > 0 {
-			acf.connectionInfo.User = acf.deleteFromCursor(acf.connectionInfo.User)
-			acf.cursor--
-		}
-	case 3:
-		if acf.cursor > 0 {
-			acf.connectionInfo.Password = acf.deleteFromCursor(acf.connectionInfo.Password)
-			acf.cursor--
-		}
-	case 4:
-		if acf.cursor > 0 {
-			acf.connectionInfo.Database = acf.deleteFromCursor(acf.connectionInfo.Database)
-			acf.cursor--
-		}
-	case 5:
-		if acf.cursor > 0 {
-			acf.connectionInfo.SSLMode = acf.deleteFromCursor(acf.connectionInfo.SSLMode)
-			acf.cursor--
-		}
-	case 6:
-		portStr := fmt.Sprintf("%d", acf.connectionInfo.Port)
-		if acf.cursor > 0 {
-			portStr = acf.deleteFromCursor(portStr)
-			acf.cursor--
-			var port int
-			fmt.Sscanf(portStr, "%d", &port)
-			acf.connectionInfo.Port = port
-		}
+	if acf.currentField() == fieldDriver || acf.cursor == 0 {
+		return
 	}
+
+	switch acf.currentField() {
+	case fieldName:
+		acf.connectionInfo.Name = acf.deleteFromCursor(acf.connectionInfo.Name)
+	case fieldHost:
+		acf.connectionInfo.Host = acf.deleteFromCursor(acf.connectionInfo.Host)
+	case fieldPort:
+		portStr := acf.deleteFromCursor(acf.currentFieldValue())
+		acf.cursor--
+		acf.setPortFromString(portStr)
+		return
+	case fieldUser:
+		acf.connectionInfo.User = acf.deleteFromCursor(acf.connectionInfo.User)
+	case fieldPassword:
+		acf.connectionInfo.Password = acf.deleteFromCursor(acf.connectionInfo.Password)
+	case fieldDatabase:
+		acf.connectionInfo.Database = acf.deleteFromCursor(acf.connectionInfo.Database)
+	case fieldSSLMode:
+		acf.connectionInfo.SSLMode = acf.deleteFromCursor(acf.connectionInfo.SSLMode)
+	case fieldPath:
+		acf.connectionInfo.Path = acf.deleteFromCursor(acf.connectionInfo.Path)
+	}
+	acf.cursor--
+}
+
+func (acf *AddConnectionForm) setPortFromString(value string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		acf.connectionInfo.Port = 0
+		return
+	}
+	port, err := strconv.Atoi(value)
+	if err != nil {
+		return
+	}
+	acf.connectionInfo.Port = port
 }
 
 func (acf *AddConnectionForm) insertAtCursor(current, char string) string {
@@ -231,109 +298,194 @@ func (acf *AddConnectionForm) insertAtCursor(current, char string) string {
 }
 
 func (acf *AddConnectionForm) deleteFromCursor(current string) string {
-	if acf.cursor <= 1 {
-		if len(current) <= 1 {
-			return ""
-		}
-		return current[1:]
+	if acf.cursor == 0 || len(current) == 0 {
+		return current
 	}
-	if acf.cursor > len(current) {
+	if acf.cursor >= len(current) {
 		return current[:len(current)-1]
 	}
 	return current[:acf.cursor-1] + current[acf.cursor:]
 }
 
 func (acf *AddConnectionForm) validate() bool {
-	return strings.TrimSpace(acf.connectionInfo.Name) != "" &&
-		strings.TrimSpace(acf.connectionInfo.Host) != "" &&
-		strings.TrimSpace(acf.connectionInfo.Database) != "" &&
-		acf.connectionInfo.Port > 0
+	info := acf.connectionInfo
+	if strings.TrimSpace(info.Name) == "" {
+		acf.validationError = "Nome da conexão é obrigatório"
+		return false
+	}
+
+	switch info.Type {
+	case ConnectionSQLite:
+		if strings.TrimSpace(info.Path) == "" {
+			acf.validationError = "Informe o caminho do arquivo SQLite"
+			return false
+		}
+	default:
+		switch {
+		case strings.TrimSpace(info.Host) == "":
+			acf.validationError = "Host é obrigatório para PostgreSQL"
+			return false
+		case info.Port <= 0:
+			acf.validationError = "Porta inválida"
+			return false
+		case strings.TrimSpace(info.Database) == "":
+			acf.validationError = "Database é obrigatório"
+			return false
+		}
+	}
+
+	acf.validationError = ""
+	return true
 }
 
 func (acf *AddConnectionForm) View() string {
-	title := "🔧 Configure Connection"
+	title := "🔧 Nova Conexão"
 	if acf.mode == "edit" {
-		title = "✏️ Edit Connection"
+		title = "✏️ Editar Conexão"
 	}
 
-	titleStyle := lipgloss.NewStyle().
+	var lines []string
+	header := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#FFD700")).
 		Bold(true).
+		Width(74).
 		Align(lipgloss.Center).
-		Width(70)
+		Render(title)
+	lines = append(lines, header, "")
 
-	content := titleStyle.Render(title) + "\n\n"
-
-	fields := []struct {
-		label string
-		value string
-		field int
-	}{
-		{"Connection Name:", acf.connectionInfo.Name, 0},
-		{"Host:", acf.connectionInfo.Host, 1},
-		{"Port:", fmt.Sprintf("%d", acf.connectionInfo.Port), 6},
-		{"User:", acf.connectionInfo.User, 2},
-		{"Password:", acf.connectionInfo.Password, 3},
-		{"Database:", acf.connectionInfo.Database, 4},
-		{"SSL Mode:", acf.connectionInfo.SSLMode, 5},
-	}
-
-	labelWidth := acf.fieldLabelWidth
-	valueWidth := 35
-
-	for i, field := range fields {
-		lineStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF"))
-		if acf.field == i {
-			lineStyle = lineStyle.Background(lipgloss.Color("#2B6CB0"))
-		}
-
-		value := field.value
-		if field.field == 3 && value != "" {
-			value = strings.Repeat("*", len(value))
-		}
-
-		labelStyled := lipgloss.NewStyle().
-			Width(labelWidth).
-			Align(lipgloss.Right).
-			Bold(true).
-			Render(field.label)
-
-		valueStyled := lipgloss.NewStyle().
-			Width(valueWidth).
-			Render(value)
-
-		cursorMarker := " "
-		if acf.field == i {
-			cursorMarker = ">"
-		}
-
-		content += lineStyle.Render(fmt.Sprintf("%s %s %s", cursorMarker, labelStyled, valueStyled)) + "\n"
+	for idx, field := range acf.visibleFields() {
+		line := acf.renderField(field, acf.field == idx)
+		lines = append(lines, line)
 	}
 
 	if acf.validationError != "" {
-		errorStyle := lipgloss.NewStyle().
+		errLine := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#FF6B6B")).
-			Bold(true)
-		content += "\n" + errorStyle.Render(acf.validationError) + "\n"
+			Bold(true).
+			Render("⚠ " + acf.validationError)
+		lines = append(lines, "", errLine)
 	}
 
-	helpText := "↑/↓ Navega | ←/→ Move Cursor | Enter Salva | Esc Cancela | Tab Alterna Campo"
-	if acf.mode == "edit" {
-		helpText = "↑/↓ Navega | ←/→ Move Cursor | Enter Atualiza | Esc Cancela Edição"
-	}
+	helpText := "↑/↓ Navega | ←/→ Move cursor (Driver alterna) | Tab Avança | Ctrl+T Troca Driver | Enter Salva | Esc Cancela"
+	helpLine := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#888888")).
+		Italic(true).
+		Render(helpText)
+	lines = append(lines, "", helpLine)
 
-	helpStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#808080")).
-		Italic(true)
-
-	content += "\n" + helpStyle.Render(helpText)
-
-	border := lipgloss.NewStyle().
+	container := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#4169E1")).
-		Padding(1, 2)
+		Padding(1, 2).
+		Render(strings.Join(lines, "\n"))
 
-	return border.Render(content)
+	return container
+}
+
+func (acf *AddConnectionForm) renderField(field formField, focused bool) string {
+	label := acf.fieldLabel(field)
+	value := acf.displayValue(field)
+
+	lineStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF"))
+	if focused {
+		lineStyle = lineStyle.Background(lipgloss.Color("#1F3B73"))
+	}
+
+	labelStyled := lipgloss.NewStyle().
+		Width(acf.fieldLabelWidth).
+		Align(lipgloss.Right).
+		Bold(true).
+		Render(label)
+
+	valueStyled := lipgloss.NewStyle().
+		Width(38).
+		Render(value)
+
+	cursorMarker := " "
+	if focused {
+		cursorMarker = "▶"
+	}
+
+	return lineStyle.Render(fmt.Sprintf("%s %s %s", cursorMarker, labelStyled, valueStyled))
+}
+
+func (acf *AddConnectionForm) displayValue(field formField) string {
+	info := acf.connectionInfo
+	switch field {
+	case fieldDriver:
+		label := driverLabels[info.Type]
+		if label == "" {
+			label = string(info.Type)
+		}
+		return fmt.Sprintf("%s (Ctrl+T)", label)
+	case fieldName:
+		if info.Name == "" {
+			return "(nome amigável)"
+		}
+		return info.Name
+	case fieldHost:
+		if info.Host == "" {
+			return "(ex: localhost)"
+		}
+		return info.Host
+	case fieldPort:
+		if info.Port <= 0 {
+			return "(ex: 5432)"
+		}
+		return fmt.Sprintf("%d", info.Port)
+	case fieldUser:
+		if info.User == "" {
+			return "(opcional)"
+		}
+		return info.User
+	case fieldPassword:
+		if info.Password == "" {
+			return "(opcional)"
+		}
+		return strings.Repeat("•", len(info.Password))
+	case fieldDatabase:
+		if info.Database == "" {
+			return "(database)"
+		}
+		return info.Database
+	case fieldSSLMode:
+		if info.SSLMode == "" {
+			return "(disable/require/verify-full)"
+		}
+		return info.SSLMode
+	case fieldPath:
+		if info.Path == "" {
+			return "(ex: /dados/app.db)"
+		}
+		return fmt.Sprintf("%s (%s)", filepath.Base(info.Path), info.Path)
+	default:
+		return ""
+	}
+}
+
+func (acf *AddConnectionForm) fieldLabel(field formField) string {
+	switch field {
+	case fieldDriver:
+		return "Driver:"
+	case fieldName:
+		return "Nome:"
+	case fieldHost:
+		return "Host:"
+	case fieldPort:
+		return "Porta:"
+	case fieldUser:
+		return "Usuário:"
+	case fieldPassword:
+		return "Senha:"
+	case fieldDatabase:
+		return "Database:"
+	case fieldSSLMode:
+		return "SSL Mode:"
+	case fieldPath:
+		return "Arquivo SQLite:"
+	default:
+		return ""
+	}
 }
 
 func (acf *AddConnectionForm) GetConnectionInfo() *ConnectionInfo {
@@ -345,9 +497,13 @@ func (acf *AddConnectionForm) SetConnectionInfo(info *ConnectionInfo) {
 		return
 	}
 	acf.connectionInfo = info
+	if acf.connectionInfo.Type == "" {
+		acf.connectionInfo.Type = ConnectionPostgres
+	}
 	acf.mode = "edit"
 	acf.field = 0
-	acf.cursor = len(info.Name)
+	acf.cursor = 0
+	acf.validationError = ""
 }
 
 func (acf *AddConnectionForm) IsConfirmed() bool {
@@ -355,5 +511,5 @@ func (acf *AddConnectionForm) IsConfirmed() bool {
 }
 
 func (acf *AddConnectionForm) IsCancelled() bool {
-	return acf.isConfirmed && strings.TrimSpace(acf.connectionInfo.Name) == ""
+	return acf.cancelled
 }

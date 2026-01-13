@@ -15,7 +15,7 @@ type PostgresTreeLoader struct {
 	connections map[string]*sql.DB
 }
 
-func (ptl *PostgresTreeLoader) UpdateCell(databaseName, schemaName, tableName, column, ctid string, value interface{}) error {
+func (ptl *PostgresTreeLoader) UpdateCell(databaseName, schemaName, tableName, column, rowID string, value interface{}) error {
 	dbConn, err := ptl.getDatabaseConnection(databaseName)
 	if err != nil {
 		return err
@@ -27,7 +27,7 @@ func (ptl *PostgresTreeLoader) UpdateCell(databaseName, schemaName, tableName, c
 		WHERE ctid = $2
 	`, quoteIdentifier(schemaName), quoteIdentifier(tableName), quoteIdentifier(column))
 
-	_, err = dbConn.Exec(query, value, ctid)
+	_, err = dbConn.Exec(query, value, rowID)
 	if err != nil {
 		return fmt.Errorf("failed to update %s.%s.%s: %w", schemaName, tableName, column, err)
 	}
@@ -73,7 +73,7 @@ func (ptl *PostgresTreeLoader) InsertRow(databaseName, schemaName, tableName str
 	return nil
 }
 
-func (ptl *PostgresTreeLoader) DeleteRow(databaseName, schemaName, tableName, ctid string) error {
+func (ptl *PostgresTreeLoader) DeleteRow(databaseName, schemaName, tableName, rowID string) error {
 	dbConn, err := ptl.getDatabaseConnection(databaseName)
 	if err != nil {
 		return err
@@ -84,7 +84,7 @@ func (ptl *PostgresTreeLoader) DeleteRow(databaseName, schemaName, tableName, ct
 		WHERE ctid = $1
 	`, quoteIdentifier(schemaName), quoteIdentifier(tableName))
 
-	if _, err := dbConn.Exec(query, ctid); err != nil {
+	if _, err := dbConn.Exec(query, rowID); err != nil {
 		return fmt.Errorf("failed to delete row: %w", err)
 	}
 	return nil
@@ -436,7 +436,7 @@ func (ptl *PostgresTreeLoader) GetTableData(databaseName, schemaName, tableName 
 	}
 
 	query := fmt.Sprintf(`
-		SELECT ctid AS "__ctid", *
+		SELECT ctid AS "__rowid", *
 		FROM %s.%s
 		ORDER BY ctid
 		LIMIT %d OFFSET %d

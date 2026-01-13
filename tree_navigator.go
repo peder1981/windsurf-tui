@@ -8,17 +8,17 @@ import (
 )
 
 type TreeNavigator struct {
-	model          *TreeModel
-	app            interface{}
-	postgresLoader *PostgresTreeLoader
+	model    *TreeModel
+	app      interface{}
+	dbLoader DatabaseLoader
 }
 
 func NewTreeNavigator(model *TreeModel) *TreeNavigator {
 	return &TreeNavigator{model: model}
 }
 
-func (tn *TreeNavigator) SetPostgresLoader(loader *PostgresTreeLoader) {
-	tn.postgresLoader = loader
+func (tn *TreeNavigator) SetDatabaseLoader(loader DatabaseLoader) {
+	tn.dbLoader = loader
 }
 
 func (tn *TreeNavigator) SetApp(app interface{}) {
@@ -116,9 +116,9 @@ func (tn *TreeNavigator) navigateRight() (tea.Model, tea.Cmd) {
 
 	if selected.HasChildren() && !selected.Expanded {
 		selected.Expand()
-	} else if !selected.HasChildren() && tn.postgresLoader != nil {
+	} else if !selected.HasChildren() && tn.dbLoader != nil {
 		// Try to load children on demand
-		if err := tn.postgresLoader.LoadChildren(selected); err == nil && selected.HasChildren() {
+		if err := tn.dbLoader.LoadChildren(selected); err == nil && selected.HasChildren() {
 			selected.Expand()
 		}
 	}
